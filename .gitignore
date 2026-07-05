@@ -1,0 +1,7 @@
+/target/
+/fuzz/target/
+/out/
+crash-*
+oom-*
+timeout-*
+slow-unit-*

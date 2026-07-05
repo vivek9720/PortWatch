@@ -1,0 +1,29 @@
+[package]
+name = "portwatch"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Offline harbor operations exchange decoder and risk analyzer"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["harbor", "parser", "maritime", "fuzzing"]
+categories = ["parser-implementations", "network-programming"]
+
+[dependencies]
+
+[lib]
+name = "portwatch"
+path = "src/lib.rs"
+
+[[bin]]
+name = "portwatch-dump"
+path = "src/bin/portwatch-dump.rs"
+
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+opt-level = 3
+debug = true
+overflow-checks = true
+panic = "abort"

@@ -1,0 +1,9 @@
+language: rust
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address
+fuzz_targets:
+  - stream_fuzzer
+  - manifest_fuzzer
+  - ledger_fuzzer
