@@ -17,8 +17,20 @@ pub struct VesselLedger {
     dictionary: StringDictionary,
     records: Vec<LedgerRecord>,
     retained: Vec<NameLease>,
+    harbor_retained: Vec<HarborLease>,
     materialized: Vec<String>,
     audit_score: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HarborLease {
+    vessel: VesselId,
+    name_code: u16,
+    berth_code: u16,
+    flags: u16,
+    lease: NameLease,
+    revision_tag: u32,
+    route_hash: u32,
 }
 
 impl VesselLedger {
@@ -39,6 +51,15 @@ impl VesselLedger {
     }
 
     pub fn apply_program(&mut self, data: &[u8], base: usize) -> ParseResult<Vec<Finding>> {
+        self.apply_program_with_harbor_dictionary(data, base, None)
+    }
+
+    pub fn apply_program_with_harbor_dictionary(
+        &mut self,
+        data: &[u8],
+        base: usize,
+        harbor_dictionary: Option<&StringDictionary>,
+    ) -> ParseResult<Vec<Finding>> {
         let mut cursor = ByteCursor::with_base(data, base);
         let mut findings = Vec::new();
         let count = cursor.read_u16()? as usize;
@@ -104,6 +125,33 @@ impl VesselLedger {
                         self.records.drain(0..trim);
                     }
                 }
+                0x08 => {
+                    let vessel = VesselId(cursor.read_u32()?);
+                    let name_code = cursor.read_u16()?;
+                    let berth_code = cursor.read_u16()?;
+                    let flags = cursor.read_u16()?;
+                    let route_hash = cursor.read_u32()?;
+                    if let Some(dictionary) = harbor_dictionary {
+                        if let Some(lease) = dictionary.lease(name_code) {
+                            self.harbor_retained.push(HarborLease {
+                                vessel,
+                                name_code,
+                                berth_code,
+                                flags,
+                                lease,
+                                revision_tag: dictionary.revision_tag(),
+                                route_hash,
+                            });
+                        }
+                    }
+                }
+                0x09 => {
+                    let minimum_weight = cursor.read_u16()?;
+                    let revision = harbor_dictionary
+                        .map(|dictionary| dictionary.revision_tag())
+                        .unwrap_or_default();
+                    findings.extend(self.reconcile_harbor_leases(minimum_weight, revision));
+                }
                 _ => {
                     return Err(ParseError::invalid_tag(op_offset, "ledger op"));
                 }
@@ -116,9 +164,11 @@ impl VesselLedger {
         for record in &self.records {
             if let Some(index) = record.retained_index {
                 if let Some(lease) = self.retained.get(index).copied() {
-                    let text = lease.text_lossy();
-                    self.materialized.push(text);
-                    continue;
+                    if lease.generation() == self.dictionary.generation() {
+                        let text = lease.text_lossy();
+                        self.materialized.push(text);
+                        continue;
+                    }
                 }
             }
             if let Some(text) = self.dictionary.get(record.name_code) {
@@ -154,6 +204,39 @@ impl VesselLedger {
                         "similar-name",
                         Some(record.vessel),
                         format!("name code {} resembles {}", record.name_code, target_code),
+                    ));
+                }
+            }
+        }
+        findings
+    }
+
+    fn reconcile_harbor_leases(
+        &mut self,
+        minimum_weight: u16,
+        current_revision: u32,
+    ) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        for cached in &self.harbor_retained {
+            let weighted = cached
+                .route_hash
+                .rotate_left((cached.berth_code as u32) & 31)
+                ^ cached.revision_tag
+                ^ current_revision
+                ^ cached.lease.checksum();
+            let priority = ((weighted >> 7) as u16) ^ cached.flags ^ cached.name_code;
+            if priority < minimum_weight {
+                continue;
+            }
+            if cached.revision_tag == current_revision || cached.flags & 0x0040 != 0 {
+                let text = cached.lease.text_lossy();
+                self.materialized.push(text.clone());
+                if text.contains("TANK") || text.contains("GAS") || text.contains("CHEM") {
+                    findings.push(Finding::new(
+                        FindingSeverity::Medium,
+                        "harbor-name-risk",
+                        Some(cached.vessel),
+                        format!("cached harbor name {}", cached.name_code),
                     ));
                 }
             }

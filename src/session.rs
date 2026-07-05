@@ -76,7 +76,11 @@ impl StreamSession {
                 self.apply_records(&payload, frame.offset)?;
             }
             FrameKind::Ledger => {
-                let findings = self.ledger.apply_program(&payload, frame.offset)?;
+                let findings = self.ledger.apply_program_with_harbor_dictionary(
+                    &payload,
+                    frame.offset,
+                    Some(&self.dictionary),
+                )?;
                 for finding in findings {
                     let _ = finding;
                 }
@@ -146,7 +150,11 @@ impl StreamSession {
                     self.stats.templates = self.templates.len();
                 }
                 Tag::Ledger => {
-                    let _ = self.ledger.apply_program(entry.value, entry.offset + 4)?;
+                    let _ = self.ledger.apply_program_with_harbor_dictionary(
+                        entry.value,
+                        entry.offset + 4,
+                        Some(&self.dictionary),
+                    )?;
                 }
                 Tag::Segment => {
                     self.apply_segment(entry.value, entry.offset as u32)?;
